@@ -1,5 +1,6 @@
 import 'package:bmw_demo/constants/my_images.dart';
 import 'package:bmw_demo/constants/my_textstyle.dart';
+import 'package:bmw_demo/screens/counter/events_screen.dart';
 import 'package:bmw_demo/screens/fan_screen.dart';
 import 'package:bmw_demo/utils/sound_pool_singleton.dart';
 import 'package:bmw_demo/widgets/background_container.dart';
@@ -52,6 +53,7 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
               _bBuildSettingsButton(context),
+              _bBuildCountersButton(context),
               _bBMWbutton(),
             ],
           ),
@@ -158,6 +160,21 @@ class HomeScreen extends StatelessWidget {
             ),
           )
         ],
+      ),
+    );
+  }
+
+  _bBuildCountersButton(BuildContext context) {
+    return Positioned(
+      top: 20,
+      left: 10,
+      child: MyRoundButton(
+        icon: const Icon(Icons.hourglass_bottom_rounded),
+        onPressed: () {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (context) => const EventsScreen(),
+          ));
+        },
       ),
     );
   }

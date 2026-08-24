@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="day_counter_widget_label">Day Counter</string>
+    <string name="day_counter_widget_description">Counts the days until — or since — a date you pick.</string>
+    <string name="day_counter_widget_artwork">Counter background</string>
+</resources>
