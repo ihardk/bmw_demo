@@ -146,7 +146,7 @@ packages:
     source: hosted
     version: "3.0.0"
   fake_async:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: fake_async
       sha256: "5368f224a74523e8d2e7399ea1638b37aecfca824a3cc4dfdf77bf1fa905ac44"
@@ -296,6 +296,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.1"
+  google_mlkit_document_scanner:
+    dependency: "direct main"
+    description:
+      name: google_mlkit_document_scanner
+      sha256: f219bda6f7c65f9fdbc1d7890eddb1058bf10901daff1733d3abb6a6648a1824
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.1"
   google_mlkit_text_recognition:
     dependency: "direct main"
     description:

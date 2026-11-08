@@ -11,6 +11,20 @@ Every scan runs two on-device engines:
 
 If Gemma isn't downloaded, the phone can't run it, or it fails (usually for lack of memory), the app formats ML Kit's text into a note by simple rules. It recognises bullets, numbers, check boxes and `Heading:` lines, and tells you a quick scan was used. Each note card shows which engine made it (✨ for the model, ⚡ for a quick scan).
 
+### Several pages in one go
+
+**Scan notes → Scan pages** opens Google's document scanner, delivered through Google Play services. You can take pages one after another, with auto-capture, edge detection and cropping. You can also import from the gallery inside the scanner. If the scanner isn't available, the app falls back to the camera and asks "Next page" or "Scan N pages" after each photo. **Choose from gallery** picks up to 20 photos.
+
+### Activity screen
+
+Tap a running scan, or the ♥ monitor icon in the top bar, to see:
+- **Memory:** this app's memory (now and peak) and the phone's RAM used and free, refreshed every 1.5 s. It warns when free memory gets low.
+- **The running scan:** stage, page, elapsed time and model load time. It also shows *image + prompt* time (until the first word), speed in tokens/s, words and tokens written, per-page times, and where the model runs (e.g. `GPU · vision CPU`, as the engine reports it after any fallback).
+- **Live output:** the note as the model writes it.
+- When idle, it shows a summary of the last scan.
+
+The model already runs off the UI thread. LiteRT-LM generates on native worker threads, and its slow setup steps run on separate Dart isolates, so the screen stays responsive during a scan.
+
 ### Scans run in the background
 
 A scan doesn't block the app. Each one appears as a card at the top of the notes list, showing a progress bar and a live status ("Writing page 1 of 2 · 120 words"). You can open other notes, change settings or queue more scans while it runs; scans are processed one at a time. When a scan finishes, a "Note ready" message appears with an **Open** button.

@@ -8,11 +8,50 @@ import 'ocr_service.dart';
 
 enum ReadingMode { best, quick }
 
-/// Where a scan is: a line for the user and how far along it is (0–1).
+enum ScanStage { ocr, loadingModel, encoding, writing, formatting }
+
+/// Where a scan is: a line for the user, how far along it is (0–1), and the
+/// live numbers the activity screen shows.
 class ScanProgress {
-  const ScanProgress(this.status, this.fraction);
+  const ScanProgress(
+    this.status,
+    this.fraction, {
+    this.stage = ScanStage.ocr,
+    this.page = 0,
+    this.pages = 0,
+    this.tokens = 0,
+    this.words = 0,
+    this.preview = '',
+    this.backend,
+    this.modelLoadMs,
+    this.firstTokenMs,
+    this.tokensPerSec,
+    this.pageTimesMs = const [],
+  });
+
   final String status;
   final double fraction;
+  final ScanStage stage;
+
+  /// 1-based page being worked on, of [pages].
+  final int page;
+  final int pages;
+
+  /// Text pieces (~tokens) and words the model has written for this page.
+  final int tokens;
+  final int words;
+
+  /// The end of what the model has written so far.
+  final String preview;
+
+  /// Where the model runs, e.g. "GPU · vision CPU".
+  final String? backend;
+  final int? modelLoadMs;
+
+  /// Time from sending the page to the first word: image encoding + prompt.
+  final int? firstTokenMs;
+  final double? tokensPerSec;
+  final List<int> pageTimesMs;
 }
 
 /// A scan that produced nothing, with a message fit to show the user.
@@ -69,14 +108,42 @@ class ScanPipeline {
     // Share of the bar for the ML Kit pass: small when the model follows.
     final ocrShare = useModel ? 0.1 : 0.9;
 
+    // Live numbers, sent with every progress update.
+    String? backend;
+    int? modelLoadMs, firstTokenMs;
+    double? tokensPerSec;
+    var tokens = 0, words = 0, page = 0;
+    var preview = '';
+    final pageTimes = <int>[];
+    void emit(String status, double fraction, ScanStage stage) => onProgress(
+      ScanProgress(
+        status,
+        fraction,
+        stage: stage,
+        page: page,
+        pages: n,
+        tokens: tokens,
+        words: words,
+        preview: preview,
+        backend: backend,
+        modelLoadMs: modelLoadMs,
+        firstTokenMs: firstTokenMs,
+        tokensPerSec: tokensPerSec,
+        pageTimesMs: List.unmodifiable(pageTimes),
+      ),
+    );
+
     // ML Kit failing must not sink the scan: the model can still read the
     // page without its hint.
     final ocrBlocks = <List<String>>[];
     Object? ocrError;
     try {
       for (var i = 0; i < n; i++) {
-        onProgress(
-          ScanProgress('Finding text on ${pageLabel(i)}…', ocrShare * i / n),
+        page = i + 1;
+        emit(
+          'Finding text on ${pageLabel(i)}…',
+          ocrShare * i / n,
+          ScanStage.ocr,
         );
         try {
           ocrBlocks.add(await _ocr.readBlocks(pages[i]));
@@ -95,16 +162,28 @@ class ScanPipeline {
     String? notice;
     if (useModel) {
       try {
-        onProgress(ScanProgress('Loading the on-device model…', ocrShare));
+        emit('Loading the on-device model…', ocrShare, ScanStage.loadingModel);
+        final load = Stopwatch()..start();
         final m = await model.openModel();
+        modelLoadMs = load.elapsedMilliseconds;
+        backend = LocalModelService.backendLabel(m);
         try {
           final parts = <String>[];
           for (var i = 0; i < n; i++) {
+            page = i + 1;
+            tokens = 0;
+            words = 0;
+            preview = '';
+            firstTokenMs = null;
+            tokensPerSec = null;
             final base = ocrShare + (1 - ocrShare) * i / n;
             final share = (1 - ocrShare) / n;
-            onProgress(
-              ScanProgress('Reading handwriting on ${pageLabel(i)}…', base),
+            emit(
+              'Looking at ${pageLabel(i)} (encoding the image)…',
+              base,
+              ScanStage.encoding,
             );
+            final clock = Stopwatch()..start();
             parts.add(
               await model.readPage(
                 m,
@@ -113,18 +192,28 @@ class ScanPipeline {
                 pageCount: n,
                 ocrHint: ocrBlocks[i].join('\n\n'),
                 onText: (text) {
+                  tokens++;
+                  final now = clock.elapsedMilliseconds;
+                  firstTokenMs ??= now;
+                  final decodingMs = now - firstTokenMs!;
+                  if (tokens > 1 && decodingMs > 0) {
+                    tokensPerSec = (tokens - 1) * 1000 / decodingMs;
+                  }
+                  words = RegExp(r'\S+').allMatches(text).length;
+                  preview = text.length > 600
+                      ? text.substring(text.length - 600)
+                      : text;
                   // No way to know a page's length up front: assume ~250
                   // words and never quite reach the end of the page's share.
-                  final words = RegExp(r'\S+').allMatches(text).length;
-                  onProgress(
-                    ScanProgress(
-                      'Writing ${pageLabel(i)} · $words words',
-                      base + share * (words / 250).clamp(0.0, 0.95),
-                    ),
+                  emit(
+                    'Writing ${pageLabel(i)} · $words words',
+                    base + share * (words / 250).clamp(0.0, 0.95),
+                    ScanStage.writing,
                   );
                 },
               ),
             );
+            pageTimes.add(clock.elapsedMilliseconds);
           }
           final markdown = _withTitle(
             parts.where((p) => p.isNotEmpty).join('\n\n'),
@@ -162,7 +251,7 @@ class ScanPipeline {
       );
     }
 
-    onProgress(const ScanProgress('Formatting your note…', 0.95));
+    emit('Formatting your note…', 0.95, ScanStage.formatting);
     final markdown = OcrFormatter.format(ocrBlocks);
     return ScanResult(
       title: titleOf(markdown),

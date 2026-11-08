@@ -214,6 +214,15 @@ You turn a photo of a handwritten notebook page into clean notes in Markdown.
 
   Future<void> closeModel(InferenceModel model) => model.close();
 
+  /// Where an open model runs, as the engine reports it (after any fallback),
+  /// e.g. "GPU · vision CPU".
+  static String backendLabel(InferenceModel model) {
+    String name(PreferredBackend? b) => b == null ? '?' : b.name.toUpperCase();
+    final text = name(model.activeBackend);
+    final vision = model.activeVisionBackend;
+    return vision == null ? text : '$text · vision ${name(vision)}';
+  }
+
   /// Removes a ```markdown fence the model sometimes wraps its reply in.
   static String cleanReply(String text) {
     var t = text.trim();

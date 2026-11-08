@@ -131,4 +131,69 @@ void main() {
     expect(find.text('Groceries'), findsOneWidget); // the note card
     expect(find.text('Note ready: Groceries'), findsOneWidget); // snackbar
   });
+
+  testWidgets('Activity screen shows memory, speed, backend and live output', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final app = TestApp(ModelState.ready);
+    await app.notes.load();
+    await tester.pumpWidget(app.widget());
+    await tester.pumpAndSettle();
+
+    app.queue.enqueue([File('a.jpg'), File('b.jpg')], ReadingMode.best);
+    await tester.pump();
+    app.runner.onProgress!(
+      const ScanProgress(
+        'Writing page 2 of 2 · 12 words',
+        0.7,
+        stage: ScanStage.writing,
+        page: 2,
+        pages: 2,
+        tokens: 20,
+        words: 12,
+        preview: '# Groceries\n\n- milk\n- eggs',
+        backend: 'GPU · vision CPU',
+        modelLoadMs: 4200,
+        firstTokenMs: 3100,
+        tokensPerSec: 9.5,
+        pageTimesMs: [21000],
+      ),
+    );
+    await tester.pump();
+
+    // The scan card shows the live line, then opens the activity screen.
+    expect(find.textContaining('App RAM 1.50 GB'), findsOneWidget);
+    expect(find.textContaining('9.5 tok/s'), findsOneWidget);
+    await tester.tap(find.text('Scanning 2 pages…'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Activity'), findsOneWidget);
+    expect(find.text('1.50 GB  (peak 2.00 GB)'), findsOneWidget);
+    expect(find.text('5.00 GB used of 8.00 GB'), findsOneWidget);
+    expect(find.text('3.00 GB'), findsOneWidget); // free
+    expect(find.text('Writing note'), findsOneWidget);
+    expect(find.text('2 of 2'), findsOneWidget);
+    expect(find.text('GPU · vision CPU'), findsOneWidget);
+    expect(find.text('4.2 s'), findsOneWidget); // model load
+    expect(find.text('3.1 s'), findsOneWidget); // image + prompt
+    expect(find.text('9.5 tokens/s'), findsOneWidget);
+    expect(find.text('12 words · ~20 tokens'), findsOneWidget);
+    expect(find.text('p1 21.0 s'), findsOneWidget);
+    expect(find.textContaining('- eggs'), findsOneWidget);
+
+    // Finishing shows the last scan's summary.
+    app.runner.completer.complete(
+      ScanResult(
+        title: 'Groceries',
+        markdown: '# Groceries',
+        engine: ScanPipeline.modelEngine,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('No scan running'), findsOneWidget);
+    expect(find.text('Groceries'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+  });
 }

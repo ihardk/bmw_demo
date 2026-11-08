@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:notes_scanner/main.dart';
 import 'package:notes_scanner/services/background_keeper.dart';
 import 'package:notes_scanner/services/local_model_service.dart';
+import 'package:notes_scanner/services/memory_monitor.dart';
 import 'package:notes_scanner/services/note_store.dart';
 import 'package:notes_scanner/services/notes_repository.dart';
 import 'package:notes_scanner/services/scan_pipeline.dart';
@@ -46,6 +47,21 @@ class TestApp {
   late final NotesRepository notes;
   late final ScanQueue queue;
 
-  Widget widget() =>
-      NotesScannerApp(model: model, notes: notes, queue: queue, store: store);
+  /// Fixed memory figures: 1.5 GB app, 8 GB phone with 3 GB free.
+  final memory = MemoryMonitor(
+    reader: () => const MemorySnapshot(
+      appMb: 1536,
+      appPeakMb: 2048,
+      deviceTotalMb: 8192,
+      deviceAvailableMb: 3072,
+    ),
+  );
+
+  Widget widget() => NotesScannerApp(
+    model: model,
+    notes: notes,
+    queue: queue,
+    store: store,
+    memory: memory,
+  );
 }

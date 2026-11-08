@@ -2,15 +2,19 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/note.dart';
 import '../services/local_model_service.dart';
+import '../services/memory_monitor.dart';
 import '../services/note_store.dart';
 import '../services/notes_repository.dart';
 import '../services/scan_pipeline.dart';
 import '../services/scan_queue.dart';
+import 'activity_screen.dart';
 import 'note_screen.dart';
 import 'settings_screen.dart';
 
@@ -21,12 +25,14 @@ class HomeScreen extends StatefulWidget {
     required this.notes,
     required this.queue,
     required this.store,
+    required this.memory,
   });
 
   final LocalModelService model;
   final NotesRepository notes;
   final ScanQueue queue;
   final NoteStore store;
+  final MemoryMonitor memory;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -99,6 +105,19 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openActivity() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ActivityScreen(
+          queue: widget.queue,
+          model: widget.model,
+          memory: widget.memory,
+        ),
+      ),
+    );
+  }
+
   Future<void> _startScan() async {
     final source = await showModalBottomSheet<String>(
       context: context,
@@ -108,15 +127,17 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take photo'),
-              subtitle: const Text('Snap one notebook page'),
-              onTap: () => Navigator.pop(ctx, 'camera'),
+              leading: const Icon(Icons.document_scanner_outlined),
+              title: const Text('Scan pages'),
+              subtitle: const Text(
+                'Snap as many pages as you like, one after another',
+              ),
+              onTap: () => Navigator.pop(ctx, 'scan'),
             ),
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
               title: const Text('Choose from gallery'),
-              subtitle: const Text('Pick one or more pages'),
+              subtitle: const Text('Pick one or more photos'),
               onTap: () => Navigator.pop(ctx, 'gallery'),
             ),
           ],
@@ -125,36 +146,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (source == null) return;
 
-    // Downscale big phone photos: plenty for handwriting, much faster to read.
-    const maxSide = 2000.0;
-    const quality = 85;
-    List<XFile> picked;
-    try {
-      if (source == 'camera') {
-        final shot = await _picker.pickImage(
-          source: ImageSource.camera,
-          maxWidth: maxSide,
-          maxHeight: maxSide,
-          imageQuality: quality,
-        );
-        picked = shot == null ? [] : [shot];
-      } else {
-        picked = await _picker.pickMultiImage(
-          maxWidth: maxSide,
-          maxHeight: maxSide,
-          imageQuality: quality,
-          limit: 10,
-        );
+    final List<String> paths;
+    if (source == 'scan') {
+      paths = await _scanPages();
+    } else {
+      try {
+        paths = (await _picker.pickMultiImage(
+          maxWidth: _maxSide,
+          maxHeight: _maxSide,
+          imageQuality: _quality,
+          limit: 20,
+        )).map((x) => x.path).toList();
+      } catch (e) {
+        _showMessage('Could not open the gallery.');
+        return;
       }
-    } catch (e) {
-      _showMessage(
-        'Could not open ${source == 'camera' ? 'camera' : 'gallery'}.',
-      );
-      return;
     }
-    if (picked.isEmpty) return;
+    if (paths.isEmpty) return;
 
-    final saved = await _keepImages(picked);
+    final saved = await _keepImages(paths);
     final mode = await widget.store.loadMode();
     if (!_askedNotifications) {
       // So the progress notification can show if the user leaves the app.
@@ -164,19 +174,95 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.queue.enqueue(saved, mode);
   }
 
-  /// Copies picked photos into app storage so they survive cache clean-up.
-  Future<List<File>> _keepImages(List<XFile> picked) async {
+  // Downscale big photos: plenty for handwriting, much faster to read.
+  static const _maxSide = 2000.0;
+  static const _quality = 85;
+
+  /// Several pages in one go. Uses Google's document scanner (auto-capture,
+  /// edge detection, crop, page by page) where Google Play services offers
+  /// it, else a camera loop.
+  Future<List<String>> _scanPages() async {
+    if (Platform.isAndroid) {
+      final scanner = DocumentScanner(
+        options: DocumentScannerOptions(
+          documentFormats: const {DocumentFormat.jpeg},
+          mode: ScannerMode.filter,
+          pageLimit: 20,
+          isGalleryImport: true,
+        ),
+      );
+      try {
+        final result = await scanner.scanDocument();
+        return result.images ?? const [];
+      } on PlatformException catch (e) {
+        if ((e.message ?? '').toLowerCase().contains('cancel')) return const [];
+        debugPrint('Document scanner unavailable: $e');
+      } catch (e) {
+        debugPrint('Document scanner unavailable: $e');
+      } finally {
+        scanner.close();
+      }
+    }
+    return _cameraLoop();
+  }
+
+  /// Fallback: take a photo, then "Next page" or "Done", until done.
+  Future<List<String>> _cameraLoop() async {
+    final paths = <String>[];
+    while (mounted) {
+      XFile? shot;
+      try {
+        shot = await _picker.pickImage(
+          source: ImageSource.camera,
+          maxWidth: _maxSide,
+          maxHeight: _maxSide,
+          imageQuality: _quality,
+        );
+      } catch (e) {
+        _showMessage('Could not open the camera.');
+        break;
+      }
+      if (shot != null) paths.add(shot.path);
+      if (paths.isEmpty || !mounted) break;
+      final more = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: Text(
+            '${paths.length} page${paths.length == 1 ? '' : 's'} taken',
+          ),
+          content: const Text('Take another page, or scan what you have?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(
+                'Scan ${paths.length} page${paths.length == 1 ? '' : 's'}',
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(ctx, true),
+              icon: const Icon(Icons.add_a_photo_outlined),
+              label: const Text('Next page'),
+            ),
+          ],
+        ),
+      );
+      if (more != true) break;
+    }
+    return paths;
+  }
+
+  /// Copies the photos into app storage so they survive cache clean-up.
+  Future<List<File>> _keepImages(List<String> paths) async {
     final dir = Directory(
       '${(await getApplicationDocumentsDirectory()).path}/scans',
     );
     await dir.create(recursive: true);
     final stamp = DateTime.now().microsecondsSinceEpoch;
     final out = <File>[];
-    for (var i = 0; i < picked.length; i++) {
-      final ext = picked[i].path.split('.').last;
-      final dest = '${dir.path}/${stamp}_$i.$ext';
-      await picked[i].saveTo(dest);
-      out.add(File(dest));
+    for (var i = 0; i < paths.length; i++) {
+      final ext = paths[i].contains('.') ? paths[i].split('.').last : 'jpg';
+      out.add(await File(paths[i]).copy('${dir.path}/${stamp}_$i.$ext'));
     }
     return out;
   }
@@ -199,6 +285,16 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Notes Scanner'),
         actions: [
+          ListenableBuilder(
+            listenable: widget.queue,
+            builder: (context, _) => IconButton(
+              tooltip: 'Activity',
+              isSelected: widget.queue.busy,
+              icon: const Icon(Icons.monitor_heart_outlined),
+              selectedIcon: const Icon(Icons.monitor_heart),
+              onPressed: _openActivity,
+            ),
+          ),
           IconButton(
             tooltip: 'Settings',
             icon: const Icon(Icons.settings_outlined),
@@ -267,6 +363,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: _JobCard(
                     job: job,
+                    memory: widget.memory,
+                    onOpen: _openActivity,
                     onRetry: () => widget.queue.retry(job),
                     onRemove: () => widget.queue.remove(job),
                   ),
@@ -293,11 +391,15 @@ class _HomeScreenState extends State<HomeScreen> {
 class _JobCard extends StatelessWidget {
   const _JobCard({
     required this.job,
+    required this.memory,
+    required this.onOpen,
     required this.onRetry,
     required this.onRemove,
   });
 
   final ScanJob job;
+  final MemoryMonitor memory;
+  final VoidCallback onOpen;
   final VoidCallback onRetry;
   final VoidCallback onRemove;
 
@@ -313,7 +415,7 @@ class _JobCard extends StatelessWidget {
       color: failed ? scheme.errorContainer : scheme.surfaceContainerHigh,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: failed ? onRetry : null,
+        onTap: failed ? onRetry : onOpen,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -356,6 +458,10 @@ class _JobCard extends StatelessWidget {
                             : null,
                         borderRadius: BorderRadius.circular(4),
                       ),
+                      if (job.state == JobState.running) ...[
+                        const SizedBox(height: 6),
+                        _LiveLine(job: job, memory: memory),
+                      ],
                     ],
                   ],
                 ),
@@ -370,6 +476,36 @@ class _JobCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// "App RAM 1.9 GB · 8.4 tok/s · 0:42" under a running scan.
+class _LiveLine extends StatelessWidget {
+  const _LiveLine({required this.job, required this.memory});
+  final ScanJob job;
+  final MemoryMonitor memory;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: memory,
+      builder: (context, _) {
+        final ram = memory.latest?.appMb;
+        final speed = job.progress?.tokensPerSec;
+        final elapsed = job.startedAt == null
+            ? null
+            : DateTime.now().difference(job.startedAt!).inMilliseconds;
+        return Text(
+          [
+            if (ram != null) 'App RAM ${formatMb(ram)}',
+            if (speed != null) '${speed.toStringAsFixed(1)} tok/s',
+            if (elapsed != null) formatMs(elapsed),
+            'tap for details',
+          ].join(' · '),
+          style: Theme.of(context).textTheme.labelSmall,
+        );
+      },
     );
   }
 }

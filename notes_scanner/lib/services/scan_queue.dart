@@ -20,6 +20,26 @@ class ScanJob {
   String status = 'Waiting…';
   double? fraction;
   String? error;
+
+  /// Latest live numbers from the pipeline.
+  ScanProgress? progress;
+  DateTime? startedAt;
+}
+
+/// What the last finished scan took, for the activity screen.
+class ScanSummary {
+  ScanSummary({
+    required this.title,
+    required this.pages,
+    required this.totalMs,
+    required this.engine,
+    this.last,
+  });
+  final String title;
+  final int pages;
+  final int totalMs;
+  final String engine;
+  final ScanProgress? last;
 }
 
 /// Function that reads [pages] into a note; [ScanPipeline] in the app.
@@ -41,6 +61,11 @@ class ScanQueue extends ChangeNotifier {
   final _jobs = <ScanJob>[];
   final _done = StreamController<ScanOutcome>.broadcast();
   bool _working = false;
+  DateTime _lastKeeperUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+  ScanSummary? _lastSummary;
+
+  /// The last scan that finished, if any.
+  ScanSummary? get lastSummary => _lastSummary;
 
   List<ScanJob> get jobs => List.unmodifiable(_jobs);
   bool get busy => _jobs.any((j) => j.state != JobState.failed);
@@ -83,21 +108,30 @@ class ScanQueue extends ChangeNotifier {
       while (true) {
         final job = _jobs.where((j) => j.state == JobState.waiting).firstOrNull;
         if (job == null) break;
-        job.state = JobState.running;
+        job
+          ..state = JobState.running
+          ..startedAt = DateTime.now();
         notifyListeners();
         final waiting = _jobs.where((j) => j.state == JobState.waiting).length;
         try {
           final result = await runner(job.pages, job.mode, (p) {
             job
               ..status = p.status
-              ..fraction = p.fraction;
+              ..fraction = p.fraction
+              ..progress = p;
             notifyListeners();
-            keeper.progress(
-              waiting > 0
-                  ? 'Reading your notes (${waiting + 1} scans)'
-                  : 'Reading your notes',
-              p.status,
-            );
+            // Android rate-limits notification updates: about once a second.
+            final now = DateTime.now();
+            if (now.difference(_lastKeeperUpdate).inMilliseconds >= 1000 ||
+                p.stage != ScanStage.writing) {
+              _lastKeeperUpdate = now;
+              keeper.progress(
+                waiting > 0
+                    ? 'Reading your notes (${waiting + 1} scans)'
+                    : 'Reading your notes',
+                p.status,
+              );
+            }
           });
           final note = Note(
             id: job.id,
@@ -108,6 +142,13 @@ class ScanQueue extends ChangeNotifier {
             engine: result.engine,
           );
           await notes.add(note);
+          _lastSummary = ScanSummary(
+            title: note.title,
+            pages: job.pages.length,
+            totalMs: DateTime.now().difference(job.startedAt!).inMilliseconds,
+            engine: result.engine,
+            last: job.progress,
+          );
           _jobs.remove(job);
           lastNote = note;
           made++;
