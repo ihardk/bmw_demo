@@ -29,11 +29,23 @@ android {
         versionName = flutter.versionName
     }
 
+    // The app is built for 64-bit ARM only (the on-device model runtime ships
+    // for nothing else), so drop other ABIs' copies that plugins bring along.
+    packaging {
+        jniLibs {
+            excludes += listOf("lib/armeabi-v7a/**", "lib/x86/**", "lib/x86_64/**")
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
