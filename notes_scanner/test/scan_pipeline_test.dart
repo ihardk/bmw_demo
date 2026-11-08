@@ -36,7 +36,7 @@ void main() {
       ocr: FakeOcr({}),
     );
     await expectLater(
-      pipeline.scan([p1], mode: ReadingMode.quick, onStatus: (_) {}),
+      pipeline.scan([p1], mode: ReadingMode.quick, onProgress: (_) {}),
       throwsA(
         isA<ScanFailure>().having(
           (e) => e.message,
@@ -60,7 +60,7 @@ void main() {
       final r = await pipeline.scan(
         [p1, p2],
         mode: ReadingMode.quick,
-        onStatus: (_) {},
+        onProgress: (_) {},
       );
       expect(r.title, 'Shopping');
       expect(r.markdown, contains('- milk'));
@@ -78,7 +78,7 @@ void main() {
     final r = await pipeline.scan(
       [p1],
       mode: ReadingMode.best,
-      onStatus: (_) {},
+      onProgress: (_) {},
     );
     expect(r.notice, contains('Download the on-device model'));
   });

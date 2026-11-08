@@ -43,7 +43,7 @@ dependencies:
   flutter_edge_ai: ^2.6.0
   flutter_edge_ai_litertlm: ^1.20.0
   device_info_plus: ^13.3.0
-
+  flutter_foreground_task: ^11.0.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

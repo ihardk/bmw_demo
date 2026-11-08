@@ -11,6 +11,12 @@ Every scan runs two on-device engines:
 
 If Gemma isn't downloaded, the phone can't run it, or it fails (usually for lack of memory), the app formats ML Kit's text into a note by simple rules. It recognises bullets, numbers, check boxes and `Heading:` lines, and tells you a quick scan was used. Each note card shows which engine made it (✨ for the model, ⚡ for a quick scan).
 
+### Scans run in the background
+
+A scan doesn't block the app. Each one appears as a card at the top of the notes list, showing a progress bar and a live status ("Writing page 1 of 2 · 120 words"). You can open other notes, change settings or queue more scans while it runs; scans are processed one at a time. When a scan finishes, a "Note ready" message appears with an **Open** button.
+
+You can also leave the app. On Android, a foreground service keeps the model running and shows an ongoing "Reading your notes" notification, so the system doesn't freeze the app. If you're still away when the scan finishes, the notification changes to "Note ready", and tapping it opens the app. On first scan the app asks for notification permission (Android 13+). If you decline, scans still run but the notification stays hidden. Swiping the app away from Recents stops a running scan.
+
 **Settings → Reading mode** lets you choose between *Best quality* (Gemma when it's available) and *Quick scan* (ML Kit only).
 
 ## Requirements

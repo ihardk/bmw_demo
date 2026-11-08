@@ -1,6 +1,6 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -8,52 +8,75 @@ import 'package:path_provider/path_provider.dart';
 import '../models/note.dart';
 import '../services/local_model_service.dart';
 import '../services/note_store.dart';
+import '../services/notes_repository.dart';
 import '../services/scan_pipeline.dart';
+import '../services/scan_queue.dart';
 import 'note_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.model});
+  const HomeScreen({
+    super.key,
+    required this.model,
+    required this.notes,
+    required this.queue,
+    required this.store,
+  });
+
   final LocalModelService model;
+  final NotesRepository notes;
+  final ScanQueue queue;
+  final NoteStore store;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _store = NoteStore();
   final _picker = ImagePicker();
-  List<Note> _notes = [];
-  bool _loading = true;
-  bool _scanning = false;
   bool _bannerDismissed = true;
-  final _status = ValueNotifier<String>('');
+  bool _askedNotifications = false;
   String _query = '';
+  StreamSubscription<ScanOutcome>? _outcomes;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    widget.store.bannerDismissed().then((d) {
+      if (mounted) setState(() => _bannerDismissed = d);
+    });
+    _outcomes = widget.queue.outcomes.listen(_onOutcome);
   }
 
   @override
   void dispose() {
-    _status.dispose();
+    _outcomes?.cancel();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    final notes = await _store.loadNotes();
-    final dismissed = await _store.bannerDismissed();
+  void _onOutcome(ScanOutcome o) {
     if (!mounted) return;
-    setState(() {
-      _notes = notes;
-      _bannerDismissed = dismissed;
-      _loading = false;
-    });
+    final messenger = ScaffoldMessenger.of(context);
+    if (o.note != null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            o.notice == null
+                ? 'Note ready: ${o.note!.title}'
+                : '${o.note!.title}: ${o.notice}',
+          ),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: o.notice == null ? 5 : 8),
+          action: SnackBarAction(
+            label: 'Open',
+            onPressed: () => _openNote(o.note!),
+          ),
+        ),
+      );
+    } else if (o.error != null) {
+      _showMessage(o.error!);
+    }
   }
-
-  Future<void> _persist() => _store.saveNotes(_notes);
 
   void _showMessage(String msg) {
     if (!mounted) return;
@@ -70,7 +93,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => SettingsScreen(store: _store, model: widget.model),
+        builder: (_) =>
+            SettingsScreen(store: widget.store, model: widget.model),
       ),
     );
   }
@@ -101,7 +125,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (source == null) return;
 
-    // Downscale big phone photos: plenty for handwriting, much faster upload.
+    // Downscale big phone photos: plenty for handwriting, much faster to read.
     const maxSide = 2000.0;
     const quality = 85;
     List<XFile> picked;
@@ -124,44 +148,20 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       _showMessage(
-        'Could not open ${source == 'camera' ? 'camera' : 'gallery'}: $e',
+        'Could not open ${source == 'camera' ? 'camera' : 'gallery'}.',
       );
       return;
     }
     if (picked.isEmpty) return;
 
-    _status.value = 'Preparing photos…';
-    setState(() => _scanning = true);
-    try {
-      final saved = await _keepImages(picked);
-      final mode = await _store.loadMode();
-      final result = await ScanPipeline(model: widget.model)
-          .scan(saved, mode: mode, onStatus: (s) => _status.value = s);
-      final note = Note(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        title: result.title,
-        markdown: result.markdown,
-        createdAt: DateTime.now(),
-        imagePaths: saved.map((f) => f.path).toList(),
-        engine: result.engine,
-      );
-      setState(() => _notes.insert(0, note));
-      await _persist();
-      if (result.notice != null) _showMessage(result.notice!);
-      if (mounted) await _openNote(note);
-    } on ScanFailure catch (e) {
-      debugPrint('Scan failed: $e');
-      _showMessage(e.message);
-    } catch (e, st) {
-      debugPrint('Scan failed: $e\n$st');
-      final detail = e.toString().split('\n').first;
-      _showMessage(
-        'Could not read the pages. Please try again.\n'
-        '(${detail.length > 120 ? '${detail.substring(0, 120)}…' : detail})',
-      );
-    } finally {
-      if (mounted) setState(() => _scanning = false);
+    final saved = await _keepImages(picked);
+    final mode = await widget.store.loadMode();
+    if (!_askedNotifications) {
+      // So the progress notification can show if the user leaves the app.
+      _askedNotifications = true;
+      await widget.queue.keeper.ensurePermission();
     }
+    widget.queue.enqueue(saved, mode);
   }
 
   /// Copies picked photos into app storage so they survive cache clean-up.
@@ -187,35 +187,14 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => NoteScreen(note: note)),
     );
     if (action == NoteAction.deleted) {
-      await _delete(note);
+      await widget.notes.delete(note);
     } else {
-      setState(() {});
-      await _persist();
-    }
-  }
-
-  Future<void> _delete(Note note) async {
-    setState(() => _notes.removeWhere((n) => n.id == note.id));
-    await _persist();
-    for (final p in note.imagePaths) {
-      final f = File(p);
-      if (await f.exists()) await f.delete();
+      await widget.notes.saveChanges();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final q = _query.toLowerCase();
-    final visible = q.isEmpty
-        ? _notes
-        : _notes
-              .where(
-                (n) =>
-                    n.title.toLowerCase().contains(q) ||
-                    n.markdown.toLowerCase().contains(q),
-              )
-              .toList();
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Notes Scanner'),
@@ -227,57 +206,169 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          if (_loading)
-            const Center(child: CircularProgressIndicator())
-          else
-            Column(
+      body: ListenableBuilder(
+        listenable: Listenable.merge([
+          widget.notes,
+          widget.queue,
+          widget.model,
+        ]),
+        builder: (context, _) {
+          if (!widget.notes.loaded) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final jobs = widget.queue.jobs;
+          final all = widget.notes.notes;
+          final q = _query.toLowerCase();
+          final visible = q.isEmpty
+              ? all
+              : all
+                    .where(
+                      (n) =>
+                          n.title.toLowerCase().contains(q) ||
+                          n.markdown.toLowerCase().contains(q),
+                    )
+                    .toList();
+          final banner = _ModelBanner(
+            model: widget.model,
+            dismissed: _bannerDismissed,
+            onOpen: _openSettings,
+            onDismiss: () {
+              setState(() => _bannerDismissed = true);
+              widget.store.dismissBanner();
+            },
+          );
+
+          if (all.isEmpty && jobs.isEmpty) {
+            return Column(
               children: [
-                ListenableBuilder(
-                  listenable: widget.model,
-                  builder: (context, _) => _ModelBanner(
-                    model: widget.model,
-                    dismissed: _bannerDismissed,
-                    onOpen: _openSettings,
-                    onDismiss: () {
-                      setState(() => _bannerDismissed = true);
-                      _store.dismissBanner();
-                    },
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: banner,
+                ),
+                const Expanded(child: _EmptyState()),
+              ],
+            );
+          }
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            children: [
+              banner,
+              if (all.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: SearchBar(
+                    hintText: 'Search notes',
+                    leading: const Icon(Icons.search),
+                    onChanged: (v) => setState(() => _query = v),
                   ),
                 ),
-                if (_notes.isEmpty)
-                  const Expanded(child: _EmptyState())
-                else ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: SearchBar(
-                      hintText: 'Search notes',
-                      leading: const Icon(Icons.search),
-                      onChanged: (v) => setState(() => _query = v),
-                    ),
+              for (final job in jobs)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _JobCard(
+                    job: job,
+                    onRetry: () => widget.queue.retry(job),
+                    onRemove: () => widget.queue.remove(job),
                   ),
-                  Expanded(
-                    child: ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                      itemCount: visible.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 8),
-                      itemBuilder: (_, i) => _NoteCard(
-                        note: visible[i],
-                        onTap: () => _openNote(visible[i]),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          if (_scanning) _ScanningOverlay(status: _status),
-        ],
+                ),
+              for (final note in visible)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _NoteCard(note: note, onTap: () => _openNote(note)),
+                ),
+            ],
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _scanning ? null : _startScan,
+        onPressed: _startScan,
         icon: const Icon(Icons.document_scanner_outlined),
         label: const Text('Scan notes'),
+      ),
+    );
+  }
+}
+
+/// A scan in progress, waiting, or failed, shown above the notes.
+class _JobCard extends StatelessWidget {
+  const _JobCard({
+    required this.job,
+    required this.onRetry,
+    required this.onRemove,
+  });
+
+  final ScanJob job;
+  final VoidCallback onRetry;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final failed = job.state == JobState.failed;
+    final pages = job.pages.length;
+    final thumb = job.pages.first;
+
+    return Card(
+      color: failed ? scheme.errorContainer : scheme.surfaceContainerHigh,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: failed ? onRetry : null,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 56,
+                  height: 72,
+                  child: thumb.existsSync()
+                      ? Image.file(thumb, fit: BoxFit.cover, cacheWidth: 160)
+                      : const Icon(Icons.image_outlined),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      failed
+                          ? 'Scan failed'
+                          : job.state == JobState.waiting
+                          ? 'Waiting to scan'
+                          : 'Scanning $pages page${pages == 1 ? '' : 's'}…',
+                      style: text.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      failed ? job.error ?? '' : job.status,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodySmall,
+                    ),
+                    if (!failed) ...[
+                      const SizedBox(height: 8),
+                      LinearProgressIndicator(
+                        value: job.state == JobState.running
+                            ? job.fraction
+                            : null,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (job.state != JobState.running)
+                IconButton(
+                  tooltip: 'Remove',
+                  icon: const Icon(Icons.close),
+                  onPressed: onRemove,
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -399,7 +490,7 @@ class _ModelBanner extends StatelessWidget {
       return const SizedBox.shrink();
     }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Card(
         color: scheme.secondaryContainer,
         child: ListTile(
@@ -453,44 +544,6 @@ class _EmptyState extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ScanningOverlay extends StatelessWidget {
-  const _ScanningOverlay({required this.status});
-  final ValueListenable<String> status;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned.fill(
-      child: ColoredBox(
-        color: Colors.black54,
-        child: Center(
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                  ValueListenableBuilder(
-                    valueListenable: status,
-                    builder: (context, s, _) => Text(
-                      s,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text('Everything stays on your phone.'),
-                ],
-              ),
-            ),
-          ),
         ),
       ),
     );

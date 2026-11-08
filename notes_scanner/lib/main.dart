@@ -1,19 +1,46 @@
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
+import 'services/background_keeper.dart';
 import 'services/local_model_service.dart';
+import 'services/note_store.dart';
+import 'services/notes_repository.dart';
+import 'services/scan_pipeline.dart';
+import 'services/scan_queue.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final model = LocalModelService.instance;
-  runApp(NotesScannerApp(model: model));
-  // Device check and engine start-up run while the first frame shows.
-  await model.init();
+  final store = NoteStore();
+  final notes = NotesRepository(store);
+  final keeper = BackgroundKeeper()..init();
+  final queue = ScanQueue(
+    notes: notes,
+    keeper: keeper,
+    runner: (pages, mode, onProgress) =>
+        ScanPipeline(model: model)
+            .scan(pages, mode: mode, onProgress: onProgress),
+  );
+  runApp(
+    NotesScannerApp(model: model, notes: notes, queue: queue, store: store),
+  );
+  // Loading notes and starting the engine run while the first frame shows.
+  await Future.wait([notes.load(), model.init()]);
 }
 
 class NotesScannerApp extends StatelessWidget {
-  const NotesScannerApp({super.key, required this.model});
+  const NotesScannerApp({
+    super.key,
+    required this.model,
+    required this.notes,
+    required this.queue,
+    required this.store,
+  });
+
   final LocalModelService model;
+  final NotesRepository notes;
+  final ScanQueue queue;
+  final NoteStore store;
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +54,7 @@ class NotesScannerApp extends StatelessWidget {
         brightness: Brightness.dark,
         useMaterial3: true,
       ),
-      home: HomeScreen(model: model),
+      home: HomeScreen(model: model, notes: notes, queue: queue, store: store),
     );
   }
 }

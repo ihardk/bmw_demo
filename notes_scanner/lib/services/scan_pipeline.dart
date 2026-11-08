@@ -8,6 +8,13 @@ import 'ocr_service.dart';
 
 enum ReadingMode { best, quick }
 
+/// Where a scan is: a line for the user and how far along it is (0–1).
+class ScanProgress {
+  const ScanProgress(this.status, this.fraction);
+  final String status;
+  final double fraction;
+}
+
 /// A scan that produced nothing, with a message fit to show the user.
 class ScanFailure implements Exception {
   ScanFailure(this.message, [this.cause]);
@@ -54,10 +61,13 @@ class ScanPipeline {
   Future<ScanResult> scan(
     List<File> pages, {
     required ReadingMode mode,
-    required ValueChanged<String> onStatus,
+    required ValueChanged<ScanProgress> onProgress,
   }) async {
     final n = pages.length;
     String pageLabel(int i) => n == 1 ? 'the page' : 'page ${i + 1} of $n';
+    final useModel = mode == ReadingMode.best && model.isReady;
+    // Share of the bar for the ML Kit pass: small when the model follows.
+    final ocrShare = useModel ? 0.1 : 0.9;
 
     // ML Kit failing must not sink the scan: the model can still read the
     // page without its hint.
@@ -65,7 +75,9 @@ class ScanPipeline {
     Object? ocrError;
     try {
       for (var i = 0; i < n; i++) {
-        onStatus('Finding text on ${pageLabel(i)}…');
+        onProgress(
+          ScanProgress('Finding text on ${pageLabel(i)}…', ocrShare * i / n),
+        );
         try {
           ocrBlocks.add(await _ocr.readBlocks(pages[i]));
         } catch (e) {
@@ -81,14 +93,18 @@ class ScanPipeline {
     }
 
     String? notice;
-    if (mode == ReadingMode.best && model.isReady) {
+    if (useModel) {
       try {
-        onStatus('Loading the on-device model…');
+        onProgress(ScanProgress('Loading the on-device model…', ocrShare));
         final m = await model.openModel();
         try {
           final parts = <String>[];
           for (var i = 0; i < n; i++) {
-            onStatus('Reading handwriting on ${pageLabel(i)}…');
+            final base = ocrShare + (1 - ocrShare) * i / n;
+            final share = (1 - ocrShare) / n;
+            onProgress(
+              ScanProgress('Reading handwriting on ${pageLabel(i)}…', base),
+            );
             parts.add(
               await model.readPage(
                 m,
@@ -96,6 +112,17 @@ class ScanPipeline {
                 pageNumber: i + 1,
                 pageCount: n,
                 ocrHint: ocrBlocks[i].join('\n\n'),
+                onText: (text) {
+                  // No way to know a page's length up front: assume ~250
+                  // words and never quite reach the end of the page's share.
+                  final words = RegExp(r'\S+').allMatches(text).length;
+                  onProgress(
+                    ScanProgress(
+                      'Writing ${pageLabel(i)} · $words words',
+                      base + share * (words / 250).clamp(0.0, 0.95),
+                    ),
+                  );
+                },
               ),
             );
           }
@@ -135,7 +162,7 @@ class ScanPipeline {
       );
     }
 
-    onStatus('Formatting your note…');
+    onProgress(const ScanProgress('Formatting your note…', 0.95));
     final markdown = OcrFormatter.format(ocrBlocks);
     return ScanResult(
       title: titleOf(markdown),

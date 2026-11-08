@@ -165,6 +165,7 @@ You turn a photo of a handwritten notebook page into clean notes in Markdown.
     required int pageNumber,
     required int pageCount,
     required String ocrHint,
+    ValueChanged<String>? onText,
   }) async {
     final chat = await model.openChat(
       systemInstruction: _systemInstruction,
@@ -200,7 +201,10 @@ You turn a photo of a handwritten notebook page into clean notes in Markdown.
       );
       final reply = StringBuffer();
       await for (final r in chat.generateChatResponseAsync()) {
-        if (r is TextResponse) reply.write(r.token);
+        if (r is TextResponse) {
+          reply.write(r.token);
+          onText?.call(reply.toString());
+        }
       }
       return cleanReply(reply.toString());
     } finally {
