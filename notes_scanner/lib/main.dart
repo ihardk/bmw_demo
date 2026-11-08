@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
 import 'services/background_keeper.dart';
+import 'services/chat_engine.dart';
 import 'services/local_model_service.dart';
 import 'services/memory_monitor.dart';
 import 'services/note_store.dart';
@@ -37,6 +38,7 @@ Future<void> main() async {
       queue: queue,
       store: store,
       memory: MemoryMonitor(),
+      chat: EdgeChatEngine(model),
     ),
   );
   // Loading notes and starting the engine run while the first frame shows.
@@ -51,6 +53,7 @@ class NotesScannerApp extends StatelessWidget {
     required this.queue,
     required this.store,
     required this.memory,
+    required this.chat,
   });
 
   final LocalModelService model;
@@ -58,6 +61,7 @@ class NotesScannerApp extends StatelessWidget {
   final ScanQueue queue;
   final NoteStore store;
   final MemoryMonitor memory;
+  final ChatEngine chat;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +81,7 @@ class NotesScannerApp extends StatelessWidget {
         queue: queue,
         store: store,
         memory: memory,
+        chat: chat,
       ),
     );
   }

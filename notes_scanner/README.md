@@ -38,6 +38,15 @@ To compare models, open a note → **Compare** tab → **Compare models…**, an
 
 These are personal-use picks. The models come under their own licenses (mostly Apache-2.0; LFM2.5 has Liquid AI's license, Unlimited-OCR-2 is MIT).
 
+### Chat
+
+The 💬 icon on the home screen opens a text chat with an on-device model. It starts with the model used for scans if that one can chat, and a dropdown switches between your downloaded models that can chat:
+- **Normal conversation:** Gemma 4 E2B, Gemma 4 E4B, Qwen2-VL 2B, LFM2.5-VL 1.6B.
+- **One message at a time:** InternVL3.5 2B. Its card warns that later turns degrade on this runtime, so each message is answered on its own.
+- OCR specialists can't chat, so they aren't offered.
+
+Answers stream in as Markdown. **Stop** ends an answer early and **New chat** starts over; hybrid models get a fresh engine for this. Each answer shows its time to first word, tokens/s and token count. The bar at the top shows where the model runs, its load time and app RAM. The model loads without its image reader to save memory, and is freed when you leave the screen. Nothing is saved: the chat lasts only while the screen is open.
+
 ### Several pages in one go
 
 **Scan notes → Scan pages** opens Google's document scanner, delivered through Google Play services. You can take pages one after another, with auto-capture, edge detection and cropping. You can also import from the gallery inside the scanner. If the scanner isn't available, the app falls back to the camera and asks "Next page" or "Scan N pages" after each photo. **Choose from gallery** picks up to 20 photos.

@@ -217,8 +217,9 @@ You turn a photo of a handwritten notebook page into clean notes in Markdown.
 - Reply with the Markdown only.''';
 
   /// Opens [m] (the selected model by default). Call [closeModel] when done:
-  /// a model holds a lot of memory while open.
-  Future<InferenceModel> openModel([ModelOption? m]) async {
+  /// a model holds a lot of memory while open. With [vision] false (text
+  /// chat) the image reader is left unloaded where the model allows it.
+  Future<InferenceModel> openModel([ModelOption? m, bool vision = true]) async {
     final option = m ?? selected;
     if (!isInstalled(option)) {
       throw StateError('${option.name} is not downloaded.');
@@ -227,14 +228,24 @@ You turn a photo of a handwritten notebook page into clean notes in Markdown.
     final spec = _specs[option.id] ??= (await _builder(
       option,
     ).install(activate: false)).spec;
-    return FlutterEdgeAi.openModel(
+    Future<InferenceModel> open(bool withVision) => FlutterEdgeAi.openModel(
       spec,
       maxTokens: option.maxTokens,
       preferredBackend: option.backend,
-      preferredVisionBackend: option.visionBackend,
-      supportImage: true,
-      maxNumImages: 1,
+      preferredVisionBackend: withVision ? option.visionBackend : null,
+      supportImage: withVision,
+      maxNumImages: withVision ? 1 : null,
     );
+    if (vision) return open(true);
+    try {
+      return await open(false);
+    } catch (e) {
+      // Some bundles only start with their image reader; text chat still works.
+      debugPrint(
+        '${option.name} without vision failed ($e); retrying with it.',
+      );
+      return open(true);
+    }
   }
 
   Future<void> closeModel(InferenceModel model) => model.close();

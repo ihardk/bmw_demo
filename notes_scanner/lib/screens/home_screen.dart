@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/note.dart';
+import '../services/chat_engine.dart';
 import '../services/local_model_service.dart';
 import '../services/memory_monitor.dart';
 import '../services/note_store.dart';
@@ -15,6 +16,7 @@ import '../services/notes_repository.dart';
 import '../services/scan_pipeline.dart';
 import '../services/scan_queue.dart';
 import 'activity_screen.dart';
+import 'chat_screen.dart';
 import 'note_screen.dart';
 import 'settings_screen.dart';
 
@@ -26,6 +28,7 @@ class HomeScreen extends StatefulWidget {
     required this.queue,
     required this.store,
     required this.memory,
+    required this.chat,
   });
 
   final LocalModelService model;
@@ -33,6 +36,7 @@ class HomeScreen extends StatefulWidget {
   final ScanQueue queue;
   final NoteStore store;
   final MemoryMonitor memory;
+  final ChatEngine chat;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -308,6 +312,21 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Notes Scanner'),
         actions: [
+          IconButton(
+            tooltip: 'Chat',
+            icon: const Icon(Icons.forum_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ChatScreen(
+                  model: widget.model,
+                  engine: widget.chat,
+                  memory: widget.memory,
+                  queue: widget.queue,
+                ),
+              ),
+            ),
+          ),
           ListenableBuilder(
             listenable: widget.queue,
             builder: (context, _) => IconButton(

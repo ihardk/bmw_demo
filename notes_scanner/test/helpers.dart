@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:notes_scanner/main.dart';
 import 'package:notes_scanner/models/model_option.dart';
 import 'package:notes_scanner/services/background_keeper.dart';
+import 'package:notes_scanner/services/chat_engine.dart';
 import 'package:notes_scanner/services/local_model_service.dart';
 import 'package:notes_scanner/services/memory_monitor.dart';
 import 'package:notes_scanner/services/note_store.dart';
@@ -63,6 +64,57 @@ class FakeCompareRunner {
   }
 }
 
+/// A chat model that answers `You said: TEXT` a word at a time, and can
+/// be paused mid-answer to test Stop.
+class FakeChatSession implements ChatSession {
+  FakeChatSession(this.option);
+  @override
+  final ModelOption option;
+  @override
+  String get backend => 'GPU';
+  @override
+  int get loadMs => 1200;
+  final sent = <String>[];
+  int resets = 0;
+  bool closed = false;
+  Completer<void>? hold;
+  bool _stopped = false;
+
+  @override
+  Stream<String> send(String text) async* {
+    sent.add(text);
+    _stopped = false;
+    for (final w in ['You ', 'said: ', text]) {
+      if (hold != null) await hold!.future;
+      if (_stopped) return;
+      yield w;
+    }
+  }
+
+  @override
+  Future<void> stop() async {
+    _stopped = true;
+    hold?.complete();
+    hold = null;
+  }
+
+  @override
+  Future<void> reset() async => resets++;
+
+  @override
+  Future<void> close() async => closed = true;
+}
+
+class FakeChatEngine implements ChatEngine {
+  final opened = <FakeChatSession>[];
+  @override
+  Future<ChatSession> open(ModelOption option) async {
+    final s = FakeChatSession(option);
+    opened.add(s);
+    return s;
+  }
+}
+
 class TestApp {
   TestApp(
     ModelState state, {
@@ -82,6 +134,7 @@ class TestApp {
   }
 
   final FakeCompareRunner compare;
+  final chat = FakeChatEngine();
 
   final LocalModelService model;
   final ControlledRunner runner;
@@ -105,5 +158,6 @@ class TestApp {
     queue: queue,
     store: store,
     memory: memory,
+    chat: chat,
   );
 }

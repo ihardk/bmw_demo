@@ -15,6 +15,19 @@ enum PromptStyle {
   imageOnly,
 }
 
+/// How well a model holds a text conversation.
+enum ChatSupport {
+  /// OCR specialists: they only transcribe pages.
+  none,
+
+  /// Answers each message on its own (its card reports later turns of a
+  /// conversation degrade on this runtime).
+  singleTurn,
+
+  /// A normal back-and-forth conversation.
+  multiTurn,
+}
+
 /// The fixed picture size a model's runtime squeezes every image into. The
 /// runtime keeps neither the aspect ratio nor the EXIF orientation, so the
 /// app turns the page upright and pads it to this shape first.
@@ -54,6 +67,7 @@ class ModelOption {
     this.minRamMb = 4000,
     this.heavy,
     this.cleanup,
+    this.chat = ChatSupport.none,
   }) : assert(catalogVariant != null || (repo != null && file != null));
 
   final String id;
@@ -102,6 +116,10 @@ class ModelOption {
   /// Turns the model's raw reply into Markdown, if it needs it.
   final String Function(String)? cleanup;
 
+  /// Whether the Chat screen offers this model.
+  final ChatSupport chat;
+  bool get canChat => chat != ChatSupport.none;
+
   /// The name the file is stored under on the phone. Unique per model.
   String get installFilename =>
       catalogVariant?.file.installFilename ?? '${id}__${file!}';
@@ -134,6 +152,7 @@ abstract final class NoteModels {
       sizeBytes: LiteRtLmModels.gemma4E2bIt.generic.file.sizeBytes,
       modelType: ModelType.gemma4,
       catalogVariant: LiteRtLmModels.gemma4E2bIt.generic,
+      chat: ChatSupport.multiTurn,
     ),
     ModelOption(
       id: 'gemma-4-e4b',
@@ -147,6 +166,7 @@ abstract final class NoteModels {
       modelType: ModelType.gemma4,
       catalogVariant: LiteRtLmModels.gemma4E4bIt.generic,
       minRamMb: 7000,
+      chat: ChatSupport.multiTurn,
     ),
     ModelOption(
       id: 'qwen2-vl-2b',
@@ -160,6 +180,7 @@ abstract final class NoteModels {
       modelType: ModelType.general,
       catalogVariant: LiteRtLmModels.qwen2Vl2b.generic,
       shape: const ImageShape(672, 672),
+      chat: ChatSupport.multiTurn,
     ),
     const ModelOption(
       id: 'internvl3.5-2b',
@@ -175,6 +196,7 @@ abstract final class NoteModels {
       revision: 'b62b8ba312c0918345e237b675b1b0f0c8a1bf91',
       file: 'model.litertlm',
       shape: ImageShape(448, 448),
+      chat: ChatSupport.singleTurn,
     ),
     const ModelOption(
       id: 'lfm2.5-vl-1.6b',
@@ -189,6 +211,7 @@ abstract final class NoteModels {
       file: 'LFM2.5-VL-1.6B_int4_fixB.litertlm',
       shape: ImageShape(512, 512),
       enginePerPage: true,
+      chat: ChatSupport.multiTurn,
     ),
     const ModelOption(
       id: 'xiaomi-ocr-0',
