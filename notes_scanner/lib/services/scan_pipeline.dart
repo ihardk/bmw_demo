@@ -8,6 +8,15 @@ import 'ocr_service.dart';
 
 enum ReadingMode { best, quick }
 
+/// A scan that produced nothing, with a message fit to show the user.
+class ScanFailure implements Exception {
+  ScanFailure(this.message, [this.cause]);
+  final String message;
+  final Object? cause;
+  @override
+  String toString() => '$message (cause: $cause)';
+}
+
 class ScanResult {
   ScanResult({
     required this.title,
@@ -50,14 +59,25 @@ class ScanPipeline {
     final n = pages.length;
     String pageLabel(int i) => n == 1 ? 'the page' : 'page ${i + 1} of $n';
 
+    // ML Kit failing must not sink the scan: the model can still read the
+    // page without its hint.
     final ocrBlocks = <List<String>>[];
+    Object? ocrError;
     try {
       for (var i = 0; i < n; i++) {
         onStatus('Finding text on ${pageLabel(i)}…');
-        ocrBlocks.add(await _ocr.readBlocks(pages[i]));
+        try {
+          ocrBlocks.add(await _ocr.readBlocks(pages[i]));
+        } catch (e) {
+          debugPrint('ML Kit failed on page ${i + 1}: $e');
+          ocrError ??= e;
+          ocrBlocks.add(const []);
+        }
       }
     } finally {
-      await _ocr.close();
+      try {
+        await _ocr.close();
+      } catch (_) {}
     }
 
     String? notice;
@@ -105,6 +125,14 @@ class ScanPipeline {
       notice =
           'Quick scan used. Download the on-device model in Settings '
           'for much better results on messy handwriting.';
+    }
+
+    if (ocrError != null && ocrBlocks.every((b) => b.isEmpty)) {
+      throw ScanFailure(
+        'The text scanner failed on this phone, so the pages could not be read. '
+        'Please try again${model.isReady ? '' : ', or download the on-device model in Settings'}.',
+        ocrError,
+      );
     }
 
     onStatus('Formatting your note…');

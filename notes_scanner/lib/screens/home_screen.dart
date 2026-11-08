@@ -149,8 +149,16 @@ class _HomeScreenState extends State<HomeScreen> {
       await _persist();
       if (result.notice != null) _showMessage(result.notice!);
       if (mounted) await _openNote(note);
-    } catch (e) {
-      _showMessage('Could not read the pages: $e');
+    } on ScanFailure catch (e) {
+      debugPrint('Scan failed: $e');
+      _showMessage(e.message);
+    } catch (e, st) {
+      debugPrint('Scan failed: $e\n$st');
+      final detail = e.toString().split('\n').first;
+      _showMessage(
+        'Could not read the pages. Please try again.\n'
+        '(${detail.length > 120 ? '${detail.substring(0, 120)}…' : detail})',
+      );
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
