@@ -8,6 +8,7 @@ class Note {
     required this.markdown,
     required this.createdAt,
     this.imagePaths = const [],
+    this.engine,
   });
 
   final String id;
@@ -18,12 +19,16 @@ class Note {
   /// Local paths of the page photos the note was made from.
   final List<String> imagePaths;
 
+  /// Which reader produced the note (on-device model or quick scan).
+  final String? engine;
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'title': title,
     'markdown': markdown,
     'createdAt': createdAt.toIso8601String(),
     'imagePaths': imagePaths,
+    if (engine != null) 'engine': engine,
   };
 
   factory Note.fromJson(Map<String, dynamic> json) => Note(
@@ -32,6 +37,7 @@ class Note {
     markdown: json['markdown'] as String,
     createdAt: DateTime.parse(json['createdAt'] as String),
     imagePaths: (json['imagePaths'] as List?)?.cast<String>() ?? const [],
+    engine: json['engine'] as String?,
   );
 
   static String encodeList(List<Note> notes) =>

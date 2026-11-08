@@ -1,40 +1,56 @@
 # Notes Scanner
 
-A small Flutter app that turns photos of rough, handwritten notebook pages into clean, structured digital notes.
+A Flutter app that turns photos of rough, handwritten notebook pages into clean, structured notes, **entirely on the phone**. No account, no API key, no cloud. Photos and notes never leave the device.
 
-## How it works
+## How it reads your handwriting
 
-1. Tap **Scan notes**, then take a photo or pick one or more pages from the gallery (up to 10).
-2. The photos are sent to Claude (`claude-opus-5-5`), which reads the handwriting and rebuilds it as Markdown with headings, lists, to-do checkboxes, tables, and short descriptions of any diagrams.
-3. The note is saved on the device. Each note has three tabs:
-   - **Note** shows the formatted note (you can select text)
-   - **Edit** lets you fix anything in the Markdown
-   - **Pages** shows the original photos, with pinch-to-zoom
-4. Copy, share or delete a note from the top bar, and search all notes from the home screen.
+Every scan runs two on-device engines:
 
-## Setup
+1. **Google ML Kit text recognition** (Latin script, about 10 MB, bundled). This always runs first. It is instant, but only fair on messy handwriting.
+2. **Gemma 4 E2B** (2.6 GB, downloaded once from Settings, Apache-2.0). This reads each page image, using ML Kit's text as a hint, and writes a structured Markdown note with headings, bullet and numbered lists, to-dos (`- [ ]` / `- [x]`), tables, and a short line for any drawing. It runs through [`flutter_edge_ai`](https://pub.dev/packages/flutter_edge_ai) on the LiteRT-LM engine, using the GPU and falling back to the CPU.
+
+If Gemma isn't downloaded, the phone can't run it, or it fails (usually for lack of memory), the app formats ML Kit's text into a note by simple rules. It recognises bullets, numbers, check boxes and `Heading:` lines, and tells you a quick scan was used. Each note card shows which engine made it (✨ for the model, ⚡ for a quick scan).
+
+**Settings → Reading mode** lets you choose between *Best quality* (Gemma when it's available) and *Quick scan* (ML Kit only).
+
+## Requirements
+
+| | Quick scan (ML Kit) | On-device model (Gemma 4 E2B) |
+|---|---|---|
+| Android | 11+ (minSdk 30) | 11+, 64-bit ARM, about 4 GB RAM or more (6 GB+ recommended) |
+| iOS | 15+ | 15+, a recent iPhone (6 GB RAM or more recommended) |
+| Speed | under a second per page | roughly 10–60 s per page, depending on the phone |
+| Storage | included in the app | 2.6 GB, one-time download |
+
+The app checks the phone's RAM and CPU at start-up. It hides the model download on phones that can't run it, and warns on phones where it may be slow. The model doesn't run on an Android emulator (x86) or the iOS simulator's GPU. Test on a real phone.
+
+## Run it
 
 ```bash
 cd notes_scanner
 flutter pub get
-flutter run
+flutter run --release   # release mode: the model is much faster than in debug
 ```
 
-On first scan the app asks for an **Anthropic API key**. You can create one at https://console.anthropic.com. The key is stored only on the device, in `shared_preferences`.
+Then open **Settings → Download** to get the model. Use Wi-Fi, since the download is 2.6 GB. The download keeps going if you leave the Settings screen.
 
-> This is a quick personal or demo setup. Before you publish the app to a store, move the API call behind your own backend so the key never ships on users' devices.
+### iOS notes
+
+- `ios/Runner/Runner.entitlements` turns on the *increased memory limit* and *extended virtual addressing* capabilities that the model needs. Signing needs a paid Apple Developer team that has these capabilities enabled for the app ID.
+- All plugins use Swift Package Manager, so no Podfile is needed.
 
 ## Code layout
 
 | File | Purpose |
 | --- | --- |
-| `lib/services/claude_service.dart` | Builds the Messages API request (images + transcription prompt) and parses the reply |
-| `lib/services/note_store.dart` | Saves notes and the API key on the device |
-| `lib/screens/home_screen.dart` | Note list, search, camera/gallery picker, scanning overlay |
-| `lib/screens/note_screen.dart` | Note view, Markdown editor, original pages |
-| `lib/screens/settings_screen.dart` | API key entry |
+| `lib/services/scan_pipeline.dart` | Runs ML Kit, then Gemma (or the rule-based formatter), and reports progress |
+| `lib/services/local_model_service.dart` | Gemma: device check, download/cancel/delete, page-reading prompt |
+| `lib/services/ocr_service.dart` | ML Kit text recognition |
+| `lib/services/ocr_formatter.dart` | Turns raw OCR text into Markdown when the model isn't used |
+| `lib/services/note_store.dart` | Saves notes and settings on the device |
+| `lib/screens/` | Home (list, search, scan), note (view / edit / original pages), settings |
 
-To change how notes are formatted, edit `_systemPrompt` in `claude_service.dart`.
+To change how notes are formatted, edit `_systemInstruction` in `local_model_service.dart`.
 
 ## Tests
 

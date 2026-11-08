@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
+import 'services/local_model_service.dart';
 
-void main() => runApp(const NotesScannerApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final model = LocalModelService.instance;
+  runApp(NotesScannerApp(model: model));
+  // Device check and engine start-up run while the first frame shows.
+  await model.init();
+}
 
 class NotesScannerApp extends StatelessWidget {
-  const NotesScannerApp({super.key});
+  const NotesScannerApp({super.key, required this.model});
+  final LocalModelService model;
 
   @override
   Widget build(BuildContext context) {
@@ -19,7 +27,7 @@ class NotesScannerApp extends StatelessWidget {
         brightness: Brightness.dark,
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      home: HomeScreen(model: model),
     );
   }
 }

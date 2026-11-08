@@ -1,17 +1,20 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/note.dart';
-import '../services/claude_service.dart';
+import '../services/local_model_service.dart';
 import '../services/note_store.dart';
+import '../services/scan_pipeline.dart';
 import 'note_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.model});
+  final LocalModelService model;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -23,6 +26,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Note> _notes = [];
   bool _loading = true;
   bool _scanning = false;
+  bool _bannerDismissed = true;
+  final _status = ValueNotifier<String>('');
   String _query = '';
 
   @override
@@ -31,39 +36,46 @@ class _HomeScreenState extends State<HomeScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _status.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final notes = await _store.loadNotes();
+    final dismissed = await _store.bannerDismissed();
     if (!mounted) return;
     setState(() {
       _notes = notes;
+      _bannerDismissed = dismissed;
       _loading = false;
     });
   }
 
   Future<void> _persist() => _store.saveNotes(_notes);
 
-  void _showError(String msg) {
+  void _showMessage(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 6),
+      ),
     );
   }
 
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => SettingsScreen(store: _store)),
+      MaterialPageRoute(
+        builder: (_) => SettingsScreen(store: _store, model: widget.model),
+      ),
     );
   }
 
   Future<void> _startScan() async {
-    final apiKey = await _store.loadApiKey();
-    if (!mounted) return;
-    if (apiKey == null) {
-      _showError('Add your Anthropic API key first.');
-      await _openSettings();
-      return;
-    }
-
     final source = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -111,31 +123,34 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     } catch (e) {
-      _showError(
+      _showMessage(
         'Could not open ${source == 'camera' ? 'camera' : 'gallery'}: $e',
       );
       return;
     }
     if (picked.isEmpty) return;
 
+    _status.value = 'Preparing photos…';
     setState(() => _scanning = true);
     try {
       final saved = await _keepImages(picked);
-      final result = await ClaudeService(apiKey).transcribe(saved);
+      final mode = await _store.loadMode();
+      final result = await ScanPipeline(model: widget.model)
+          .scan(saved, mode: mode, onStatus: (s) => _status.value = s);
       final note = Note(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
         title: result.title,
         markdown: result.markdown,
         createdAt: DateTime.now(),
         imagePaths: saved.map((f) => f.path).toList(),
+        engine: result.engine,
       );
       setState(() => _notes.insert(0, note));
       await _persist();
+      if (result.notice != null) _showMessage(result.notice!);
       if (mounted) await _openNote(note);
-    } on ScanException catch (e) {
-      _showError(e.message);
     } catch (e) {
-      _showError('Something went wrong: $e');
+      _showMessage('Could not read the pages: $e');
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
@@ -208,33 +223,47 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           if (_loading)
             const Center(child: CircularProgressIndicator())
-          else if (_notes.isEmpty)
-            const _EmptyState()
           else
             Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                  child: SearchBar(
-                    hintText: 'Search notes',
-                    leading: const Icon(Icons.search),
-                    onChanged: (v) => setState(() => _query = v),
+                ListenableBuilder(
+                  listenable: widget.model,
+                  builder: (context, _) => _ModelBanner(
+                    model: widget.model,
+                    dismissed: _bannerDismissed,
+                    onOpen: _openSettings,
+                    onDismiss: () {
+                      setState(() => _bannerDismissed = true);
+                      _store.dismissBanner();
+                    },
                   ),
                 ),
-                Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                    itemCount: visible.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (_, i) => _NoteCard(
-                      note: visible[i],
-                      onTap: () => _openNote(visible[i]),
+                if (_notes.isEmpty)
+                  const Expanded(child: _EmptyState())
+                else ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: SearchBar(
+                      hintText: 'Search notes',
+                      leading: const Icon(Icons.search),
+                      onChanged: (v) => setState(() => _query = v),
                     ),
                   ),
-                ),
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                      itemCount: visible.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (_, i) => _NoteCard(
+                        note: visible[i],
+                        onTap: () => _openNote(visible[i]),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
-          if (_scanning) const _ScanningOverlay(),
+          if (_scanning) _ScanningOverlay(status: _status),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -266,6 +295,7 @@ class _NoteCard extends StatelessWidget {
     final d = note.createdAt;
     final date =
         '${d.day}/${d.month}/${d.year}  ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    final quick = note.engine == ScanPipeline.quickEngine;
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -310,15 +340,80 @@ class _NoteCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 6),
-                    Text(
-                      '$date · ${note.imagePaths.length} page${note.imagePaths.length == 1 ? '' : 's'}',
-                      style: Theme.of(context).textTheme.labelSmall,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '$date · ${note.imagePaths.length} page${note.imagePaths.length == 1 ? '' : 's'}',
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                        ),
+                        if (note.engine != null)
+                          Tooltip(
+                            message: note.engine!,
+                            child: Icon(
+                              quick ? Icons.bolt : Icons.auto_awesome,
+                              size: 14,
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelBanner extends StatelessWidget {
+  const _ModelBanner({
+    required this.model,
+    required this.dismissed,
+    required this.onOpen,
+    required this.onDismiss,
+  });
+
+  final LocalModelService model;
+  final bool dismissed;
+  final VoidCallback onOpen;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final downloading = model.state == ModelState.downloading;
+    if (!downloading && (dismissed || model.state != ModelState.notInstalled)) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Card(
+        color: scheme.secondaryContainer,
+        child: ListTile(
+          leading: Icon(downloading ? Icons.downloading : Icons.auto_awesome),
+          title: Text(
+            downloading
+                ? 'Downloading on-device model… ${model.progress}%'
+                : 'Better results for messy handwriting',
+          ),
+          subtitle: downloading
+              ? LinearProgressIndicator(value: model.progress / 100)
+              : const Text(
+                  'Download the on-device AI model (2.6 GB, one time).',
+                ),
+          onTap: onOpen,
+          trailing: downloading
+              ? null
+              : IconButton(
+                  tooltip: 'Dismiss',
+                  icon: const Icon(Icons.close),
+                  onPressed: onDismiss,
+                ),
         ),
       ),
     );
@@ -357,7 +452,8 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ScanningOverlay extends StatelessWidget {
-  const _ScanningOverlay();
+  const _ScanningOverlay({required this.status});
+  final ValueListenable<String> status;
 
   @override
   Widget build(BuildContext context) {
@@ -373,12 +469,16 @@ class _ScanningOverlay extends StatelessWidget {
                 children: [
                   const CircularProgressIndicator(),
                   const SizedBox(height: 16),
-                  Text(
-                    'Reading your handwriting…',
-                    style: Theme.of(context).textTheme.titleMedium,
+                  ValueListenableBuilder(
+                    valueListenable: status,
+                    builder: (context, s, _) => Text(
+                      s,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                   ),
                   const SizedBox(height: 4),
-                  const Text('This can take up to a minute.'),
+                  const Text('Everything stays on your phone.'),
                 ],
               ),
             ),
