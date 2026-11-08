@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:notes_scanner/models/model_option.dart';
 import 'package:notes_scanner/models/note.dart';
 import 'package:notes_scanner/services/local_model_service.dart';
 import 'package:notes_scanner/services/scan_pipeline.dart';
@@ -59,7 +60,7 @@ void main() {
     expect(find.text('Better results for messy handwriting'), findsNothing);
   });
 
-  testWidgets('Settings shows model status and download button', (
+  testWidgets('Settings links to the Models screen with every model', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -69,11 +70,45 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Settings'));
     await tester.pumpAndSettle();
-    expect(find.text('Gemma 4 E2B'), findsOneWidget);
-    expect(find.text('Not downloaded'), findsOneWidget);
-    expect(find.text('Download'), findsOneWidget);
+    expect(
+      find.textContaining('Scans use Gemma 4 E2B (not downloaded)'),
+      findsOneWidget,
+    );
     expect(find.text('Best quality'), findsOneWidget);
     expect(find.text('Quick scan'), findsOneWidget);
+
+    await tester.tap(find.text('Models'));
+    await tester.pumpAndSettle();
+    for (final m in NoteModels.all) {
+      await tester.scrollUntilVisible(
+        find.text(m.name),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text(m.name), findsOneWidget);
+    }
+  });
+
+  testWidgets('A downloaded model can be chosen for scans', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final app = TestApp(ModelState.ready, installed: {'xiaomi-ocr-0'});
+    await app.notes.load();
+    await tester.pumpWidget(app.widget());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Models'));
+    await tester.pumpAndSettle();
+    expect(find.text('Used for scans'), findsOneWidget); // on Gemma 4 E2B
+    final use = find.text('Use for scans');
+    await tester.scrollUntilVisible(
+      use,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(use);
+    await tester.pumpAndSettle();
+    expect(app.model.selected.id, 'xiaomi-ocr-0');
   });
 
   testWidgets('Unsupported phone explains why', (tester) async {
@@ -85,9 +120,69 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Settings'));
     await tester.pumpAndSettle();
-    expect(find.text('Not available on this phone'), findsOneWidget);
     expect(find.text('needs about 4 GB'), findsOneWidget);
-    expect(find.text('Download'), findsNothing);
+    await tester.tap(find.text('Models'));
+    await tester.pumpAndSettle();
+    expect(find.text('Download'), findsNothing); // tile is disabled
+  });
+
+  testWidgets('Compare tab: runs models, shows results, swaps the note text', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final app = TestApp(
+      ModelState.ready,
+      installed: {'xiaomi-ocr-0', 'paddleocr-vl-1.6'},
+      compare: FakeCompareRunner(failing: {'paddleocr-vl-1.6'}),
+    );
+    await app.notes.load();
+    await app.notes.add(
+      Note(
+        id: 'n1',
+        title: 'Lecture',
+        markdown: '# Lecture\n\nquick scan text',
+        createdAt: DateTime(2026, 11, 8),
+        imagePaths: ['p1.jpg'],
+        engine: 'Quick scan (ML Kit)',
+      ),
+    );
+    await tester.pumpWidget(app.widget());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lecture'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Compare'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Compare models…'));
+    await tester.pumpAndSettle();
+    // All three downloaded models are ticked.
+    expect(find.text('Run 3'), findsOneWidget);
+    await tester.tap(find.text('Run 3'));
+    await tester.pumpAndSettle();
+
+    expect(app.compare.ran, [
+      'gemma-4-e2b',
+      'xiaomi-ocr-0',
+      'paddleocr-vl-1.6',
+    ]);
+    expect(find.text('Compare (3)'), findsOneWidget);
+    expect(find.text('At a glance'), findsOneWidget);
+    expect(find.text('failed'), findsOneWidget); // PaddleOCR row
+    expect(find.text('PaddleOCR-VL 1.6 ran out of memory.'), findsOneWidget);
+    expect(find.text('12.5'), findsNWidgets(2)); // speed column, both models
+
+    final use = find.text('Use as note').first;
+    await tester.ensureVisible(use);
+    await tester.pumpAndSettle();
+    await tester.tap(use);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use it'));
+    await tester.pumpAndSettle();
+
+    final note = app.notes.notes.single;
+    expect(note.markdown, contains('read this'));
+    expect(note.versions.first.modelName, startsWith('Earlier note text'));
+    expect(note.versions.first.markdown, contains('quick scan text'));
   });
 
   testWidgets('A running scan shows as a card and the app stays usable', (

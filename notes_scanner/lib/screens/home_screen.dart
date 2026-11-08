@@ -63,7 +63,22 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onOutcome(ScanOutcome o) {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
-    if (o.note != null) {
+    if (o.compared != null && o.note != null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Comparison ready: ${o.compared} model${o.compared == 1 ? '' : 's'} '
+            'on “${o.note!.title}”',
+          ),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 6),
+          action: SnackBarAction(
+            label: 'Open',
+            onPressed: () => _openNote(o.note!, compare: true),
+          ),
+        ),
+      );
+    } else if (o.note != null) {
       messenger.showSnackBar(
         SnackBar(
           content: Text(
@@ -267,10 +282,18 @@ class _HomeScreenState extends State<HomeScreen> {
     return out;
   }
 
-  Future<void> _openNote(Note note) async {
+  Future<void> _openNote(Note note, {bool compare = false}) async {
     final action = await Navigator.push<NoteAction>(
       context,
-      MaterialPageRoute(builder: (_) => NoteScreen(note: note)),
+      MaterialPageRoute(
+        builder: (_) => NoteScreen(
+          note: note,
+          notes: widget.notes,
+          queue: widget.queue,
+          model: widget.model,
+          openCompare: compare,
+        ),
+      ),
     );
     if (action == NoteAction.deleted) {
       await widget.notes.delete(note);
@@ -436,7 +459,14 @@ class _JobCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      failed
+                      job.isCompare
+                          ? (failed
+                                ? 'Comparison failed'
+                                : job.state == JobState.waiting
+                                ? 'Waiting to compare ${job.models.length} models'
+                                : 'Comparing ${job.models.length} models on '
+                                      '“${job.compareNote!.title}”')
+                          : failed
                           ? 'Scan failed'
                           : job.state == JobState.waiting
                           ? 'Waiting to scan'

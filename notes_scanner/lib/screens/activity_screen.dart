@@ -345,15 +345,17 @@ class _ModelCard extends StatelessWidget {
     };
     return _Section(
       icon: Icons.auto_awesome_outlined,
-      title: 'On-device model',
+      title: 'On-device models',
       children: [
-        _Stat('Model', LocalModelService.displayName),
+        _Stat('Used for scans', model.selected.name),
         _Stat('Status', status),
+        _Stat('File size', formatMb(model.selected.sizeBytes ~/ (1024 * 1024))),
         _Stat(
-          'File size',
-          formatMb(LocalModelService.sizeBytes ~/ (1024 * 1024)),
+          'Downloaded',
+          model.installed.isEmpty
+              ? 'none'
+              : model.installed.map((m) => m.name).join(', '),
         ),
-        _Stat('Context', '4096 tokens · 1 image per page'),
         if (model.deviceRamMb != null)
           _Stat('Phone RAM', formatMb(model.deviceRamMb!)),
       ],

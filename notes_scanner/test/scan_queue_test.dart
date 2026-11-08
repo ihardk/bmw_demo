@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:notes_scanner/models/model_option.dart';
+import 'package:notes_scanner/models/note.dart';
 import 'package:notes_scanner/services/local_model_service.dart';
 import 'package:notes_scanner/services/scan_pipeline.dart';
 import 'package:notes_scanner/services/scan_queue.dart';
@@ -88,5 +90,47 @@ void main() {
     await app.queue.remove(app.queue.jobs.single);
     expect(app.queue.jobs, isEmpty);
     expect(photo.existsSync(), isFalse);
+  });
+
+  test('a comparison saves one version per model, failures included', () async {
+    final app = TestApp(
+      ModelState.ready,
+      installed: {'xiaomi-ocr-0'},
+      compare: FakeCompareRunner(failing: {'xiaomi-ocr-0'}),
+    );
+    await app.notes.load();
+    final dir = Directory.systemTemp.createTempSync();
+    final photo = File('${dir.path}/p.jpg')..writeAsBytesSync([1]);
+    final note = Note(
+      id: 'n',
+      title: 'N',
+      markdown: '# N',
+      createdAt: DateTime(2026),
+      imagePaths: [photo.path],
+    );
+    await app.notes.add(note);
+    final outcomes = <ScanOutcome>[];
+    app.queue.outcomes.listen(outcomes.add);
+
+    app.queue.compare(note, [
+      NoteModels.byId('gemma-4-e2b'),
+      NoteModels.byId('xiaomi-ocr-0'),
+    ]);
+    await pumpEventQueue();
+
+    expect(app.queue.jobs, isEmpty);
+    expect(note.versions.map((v) => v.modelId), [
+      'xiaomi-ocr-0',
+      'gemma-4-e2b',
+    ]);
+    final ok = note.versions.last, bad = note.versions.first;
+    expect(ok.markdown, contains('Gemma 4 E2B read this'));
+    expect(ok.tokensPerSec, 12.5);
+    expect(ok.backend, 'CPU');
+    expect(ok.peakRamMb, greaterThan(0));
+    expect(bad.failed, isTrue);
+    expect(bad.error, 'Xiaomi-OCR-0 ran out of memory.');
+    expect(outcomes.single.compared, 2);
+    expect(photo.existsSync(), isTrue); // the note's photos stay
   });
 }

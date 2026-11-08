@@ -18,6 +18,14 @@ Future<void> main() async {
   final queue = ScanQueue(
     notes: notes,
     keeper: keeper,
+    compareRunner: (pages, option, onProgress) =>
+        ScanPipeline(model: model).scan(
+          pages,
+          mode: ReadingMode.best,
+          option: option,
+          fallbackToQuick: false,
+          onProgress: onProgress,
+        ),
     runner: (pages, mode, onProgress) =>
         ScanPipeline(model: model)
             .scan(pages, mode: mode, onProgress: onProgress),

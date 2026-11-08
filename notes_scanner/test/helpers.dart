@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:notes_scanner/main.dart';
+import 'package:notes_scanner/models/model_option.dart';
 import 'package:notes_scanner/services/background_keeper.dart';
 import 'package:notes_scanner/services/local_model_service.dart';
 import 'package:notes_scanner/services/memory_monitor.dart';
@@ -29,17 +30,58 @@ class ControlledRunner {
   }
 }
 
+/// Compare runner: each model answers `NAME read this`, or fails if its
+/// id is in [failing].
+class FakeCompareRunner {
+  FakeCompareRunner({this.failing = const {}});
+  final Set<String> failing;
+  final ran = <String>[];
+
+  Future<ScanResult> call(
+    List<File> pages,
+    ModelOption model,
+    ValueChanged<ScanProgress> progress,
+  ) async {
+    ran.add(model.id);
+    progress(const ScanProgress('Writing the page · 3 words', 0.5));
+    if (failing.contains(model.id)) {
+      throw ScanFailure('${model.name} ran out of memory.');
+    }
+    return ScanResult(
+      title: 'T',
+      markdown: '# T\n\n${model.name} read this',
+      engine: ScanPipeline.engineFor(model),
+      stats: const ScanProgress(
+        'done',
+        1,
+        tokensPerSec: 12.5,
+        modelLoadMs: 2000,
+        firstTokenMs: 1500,
+        backend: 'CPU',
+      ),
+    );
+  }
+}
+
 class TestApp {
-  TestApp(ModelState state, {ControlledRunner? runner})
-    : model = LocalModelService.fake(state),
-      runner = runner ?? ControlledRunner() {
+  TestApp(
+    ModelState state, {
+    ControlledRunner? runner,
+    Set<String> installed = const {},
+    FakeCompareRunner? compare,
+  }) : model = LocalModelService.fake(state, installed: installed),
+       runner = runner ?? ControlledRunner(),
+       compare = compare ?? FakeCompareRunner() {
     notes = NotesRepository(store);
     queue = ScanQueue(
       notes: notes,
       runner: this.runner.call,
+      compareRunner: this.compare.call,
       keeper: BackgroundKeeper(enabled: false),
     );
   }
+
+  final FakeCompareRunner compare;
 
   final LocalModelService model;
   final ControlledRunner runner;

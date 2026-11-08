@@ -80,6 +80,6 @@ void main() {
       mode: ReadingMode.best,
       onProgress: (_) {},
     );
-    expect(r.notice, contains('Download the on-device model'));
+    expect(r.notice, contains('Download an on-device model'));
   });
 }

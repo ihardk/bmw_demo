@@ -11,6 +11,33 @@ Every scan runs two on-device engines:
 
 If Gemma isn't downloaded, the phone can't run it, or it fails (usually for lack of memory), the app formats ML Kit's text into a note by simple rules. It recognises bullets, numbers, check boxes and `Heading:` lines, and tells you a quick scan was used. Each note card shows which engine made it (✨ for the model, ⚡ for a quick scan).
 
+### Models and comparing them
+
+**Settings → Models** lists 9 on-device models. You can download any of them, pick the one scans use, and delete them again. All are free to download (no Hugging Face login), and each file is pinned to a fixed commit and checked for size.
+
+| Model | Maker | Kind | Size | Notes |
+|---|---|---|---|---|
+| Gemma 4 E2B | Google | general | 2.6 GB | the default |
+| Gemma 4 E4B | Google | general | 3.7 GB | bigger and slower; 8 GB+ RAM |
+| Qwen2-VL 2B | Alibaba Qwen | general | 1.8 GB | sees 672×672 |
+| InternVL3.5 2B | Shanghai AI Lab | general | 1.6 GB | sees 448×448 |
+| LFM2.5-VL 1.6B | Liquid AI | general | 1.3 GB | sees 512×512 |
+| Xiaomi-OCR-0 | Xiaomi | OCR | 1.3 GB | CPU; sees 768×1344 |
+| PaddleOCR-VL 1.6 | Baidu | OCR | 1.4 GB | GPU only; sees 560×560 |
+| OvisOCR2 | Alibaba AIDC | OCR | 1.3 GB | CPU; sees 512×512 |
+| Unlimited-OCR-2 | Baidu | OCR | 3.8 GB | CPU; ~8 GB storage incl. cache; 8 GB+ RAM |
+
+Each model runs with the settings its Hugging Face card gives:
+- **Image shape and padding:** the page is turned upright from its EXIF data, then padded to the model's fixed input shape, because the runtime would otherwise stretch it.
+- **Prompt:** general models get the note-making instructions plus ML Kit's text as a hint. OCR specialists get their own task prompt, or none for Unlimited-OCR-2.
+- **Hardware:** CPU or GPU, as the card recommends.
+- **Decoding:** OCR models always pick the most likely word (greedy).
+- **Engine per page:** hybrid models get a fresh engine for each page.
+
+To compare models, open a note → **Compare** tab → **Compare models…**, and tick the downloaded models you want. They run in the background, one after another, on the note's own photos. Each result is saved with the note and shows its total time, model load, time to first word, tokens/s, peak app RAM, backend and word count. An "At a glance" table ranks them. **Use as note** makes one model's text the note, and the previous text is kept in Compare.
+
+These are personal-use picks. The models come under their own licenses (mostly Apache-2.0; LFM2.5 has Liquid AI's license, Unlimited-OCR-2 is MIT).
+
 ### Several pages in one go
 
 **Scan notes → Scan pages** opens Google's document scanner, delivered through Google Play services. You can take pages one after another, with auto-capture, edge detection and cropping. You can also import from the gallery inside the scanner. If the scanner isn't available, the app falls back to the camera and asks "Next page" or "Scan N pages" after each photo. **Choose from gallery** picks up to 20 photos.

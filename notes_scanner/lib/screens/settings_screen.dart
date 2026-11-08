@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../models/model_option.dart';
 import '../services/local_model_service.dart';
 import '../services/note_store.dart';
 import '../services/scan_pipeline.dart';
+import 'models_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.store, required this.model});
@@ -30,59 +32,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.store.saveMode(m);
   }
 
-  Future<void> _confirmDownload() async {
-    final model = widget.model;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Download on-device model?'),
-        content: Text(
-          '${LocalModelService.displayName} is about '
-          '${_gb(LocalModelService.sizeBytes)}. Use Wi-Fi if you can. '
-          'You only download it once, and after that everything works offline.'
-          '${model.lowRam ? '\n\nThis phone has limited memory, so reading may be slow or fail. The quick scan will be used if it does.' : ''}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Not now'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Download'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) model.download();
-  }
-
-  Future<void> _confirmDelete() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete on-device model?'),
-        content: Text(
-          'Frees ${_gb(LocalModelService.sizeBytes)}. Scans will use the quick '
-          'reader until you download it again. Your notes are kept.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) await widget.model.delete();
-  }
-
-  static String _gb(int bytes) =>
-      '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  void _openModels() => Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => ModelsScreen(model: widget.model)),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -93,16 +46,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
         listenable: widget.model,
         builder: (context, _) {
           final model = widget.model;
-          final canUseModel = model.state != ModelState.unsupported;
+          final unsupported = model.state == ModelState.unsupported;
+          final installed = model.installed.length;
+          final downloading = NoteModels.all
+              .where((m) => model.stateOf(m) == ModelState.downloading)
+              .length;
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Text('On-device AI model', style: text.titleMedium),
+              Text('On-device models', style: text.titleMedium),
               const SizedBox(height: 8),
-              _ModelCard(
-                model: model,
-                onDownload: _confirmDownload,
-                onDelete: _confirmDelete,
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.auto_awesome_outlined),
+                  title: const Text('Models'),
+                  subtitle: Text(
+                    unsupported
+                        ? model.unsupportedReason ??
+                              'Not available on this phone'
+                        : 'Scans use ${model.selected.name}'
+                              '${model.isReady ? '' : ' (not downloaded)'} · '
+                              '$installed of ${NoteModels.all.length} downloaded'
+                              '${downloading > 0 ? ' · $downloading downloading' : ''}',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: unsupported ? null : _openModels,
+                ),
               ),
               const SizedBox(height: 24),
               Text('Reading mode', style: text.titleMedium),
@@ -113,10 +82,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     RadioListTile<ReadingMode>(
                       value: ReadingMode.best,
-                      enabled: canUseModel,
+                      enabled: !unsupported,
                       title: const Text('Best quality'),
-                      subtitle: const Text(
-                        'Uses the on-device AI model when it is downloaded. '
+                      subtitle: Text(
+                        'Uses ${model.selected.name} when it is downloaded. '
                         'Best for messy handwriting. About 10–60 s per page.',
                       ),
                     ),
@@ -140,8 +109,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Expanded(
                     child: Text(
                       'Everything runs on this phone. Your photos and notes '
-                      'never leave the device. The only network use is the '
-                      'one-time model download.',
+                      'never leave the device. The only network use is '
+                      'downloading models.',
                       style: text.bodySmall,
                     ),
                   ),
@@ -150,142 +119,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           );
         },
-      ),
-    );
-  }
-}
-
-class _ModelCard extends StatelessWidget {
-  const _ModelCard({
-    required this.model,
-    required this.onDownload,
-    required this.onDelete,
-  });
-
-  final LocalModelService model;
-  final VoidCallback onDownload;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final scheme = Theme.of(context).colorScheme;
-    final ram = model.deviceRamMb;
-
-    final (IconData icon, String status, Color color) = switch (model.state) {
-      ModelState.checking => (
-        Icons.hourglass_empty,
-        'Checking…',
-        scheme.outline,
-      ),
-      ModelState.unsupported => (
-        Icons.block,
-        'Not available on this phone',
-        scheme.error,
-      ),
-      ModelState.notInstalled => (
-        Icons.cloud_download_outlined,
-        'Not downloaded',
-        scheme.outline,
-      ),
-      ModelState.downloading => (
-        Icons.downloading,
-        'Downloading ${model.progress}%',
-        scheme.primary,
-      ),
-      ModelState.ready => (
-        Icons.check_circle,
-        'Ready, works offline',
-        Colors.green,
-      ),
-      ModelState.error => (
-        Icons.error_outline,
-        'Download failed',
-        scheme.error,
-      ),
-    };
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        LocalModelService.displayName,
-                        style: text.titleSmall,
-                      ),
-                      Text(
-                        status,
-                        style: text.bodyMedium?.copyWith(color: color),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            if (model.state == ModelState.downloading) ...[
-              const SizedBox(height: 12),
-              LinearProgressIndicator(value: model.progress / 100),
-            ],
-            const SizedBox(height: 12),
-            Text(
-              model.state == ModelState.unsupported
-                  ? model.unsupportedReason ?? ''
-                  : 'Reads messy handwriting and organises it into headings, '
-                        'lists and to-dos. '
-                        '${(LocalModelService.sizeBytes / (1 << 30)).toStringAsFixed(1)} GB download.',
-              style: text.bodySmall,
-            ),
-            if (ram != null && model.state != ModelState.unsupported) ...[
-              const SizedBox(height: 4),
-              Text(
-                'This phone: ${(ram / 1024).toStringAsFixed(1)} GB RAM'
-                '${model.lowRam ? ' (may be slow)' : ' (good fit)'}',
-                style: text.bodySmall,
-              ),
-            ],
-            if (model.error != null && model.state == ModelState.error) ...[
-              const SizedBox(height: 4),
-              Text(
-                model.error!,
-                style: text.bodySmall?.copyWith(color: scheme.error),
-              ),
-            ],
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: switch (model.state) {
-                ModelState.notInstalled ||
-                ModelState.error => FilledButton.icon(
-                  onPressed: onDownload,
-                  icon: const Icon(Icons.download),
-                  label: Text(
-                    model.state == ModelState.error ? 'Try again' : 'Download',
-                  ),
-                ),
-                ModelState.downloading => OutlinedButton(
-                  onPressed: model.cancelDownload,
-                  child: const Text('Cancel'),
-                ),
-                ModelState.ready => TextButton.icon(
-                  onPressed: onDelete,
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('Delete model'),
-                ),
-                _ => const SizedBox.shrink(),
-              },
-            ),
-          ],
-        ),
       ),
     );
   }
